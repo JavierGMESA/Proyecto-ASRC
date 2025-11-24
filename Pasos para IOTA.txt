@@ -1,0 +1,29 @@
+PASOS PARA PODER USAR IOTA
+
+1. Instalar Docker en vuestra terminal Linux o en WSL (le preguntais a vuestra IA favorita)
+
+2. Una vez tengais Docker instalado meteis lo siguiente en la terminal para iniciar la red IOTA cuando querais:
+
+docker start hornet-stardust || docker run -it \
+  -p 14265:14265 \
+  -p 8081:8081 \
+  -p 9029:9029 \
+  --name hornet-stardust \
+  iotaledger/hornet:2.0.0-rc.2 \
+  --node.profile auto \
+  --inx.enabled=true \
+  --inx.bindAddress=0.0.0.0:9029 \
+  --p2p.autopeering.enabled=true \
+  --restAPI.publicRoutes="/api/*" \
+  --restAPI.pow.enabled=true \
+  --restAPI.pow.workerCount=1
+
+
+3. Abrir otra terminal y ejecutar el siguiente comando para poder ver de forma resumida el estado de la red IOTA:
+
+watch -n 5 curl http://localhost:14265/api/core/v2/info
+
+El valor que os importa es el de "isHealthy" (cuando esté sea 'true' ya podreis ejecutar los programas de python).
+
+4. Ejecutar el código python que os he pasado: ejecutar en un terminal "python3 iota_server.py" (este primero siempre)
+y en otro terminal "python3 iota_client.py".
