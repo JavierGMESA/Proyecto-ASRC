@@ -23,7 +23,7 @@ docker start hornet-stardust || docker run -it \
 
 watch -n 5 curl http://localhost:14265/api/core/v2/info
 
-El valor que os importa es el de "isHealthy" (cuando esté sea 'true' ya podreis ejecutar los programas de python).
+El valor que os importa es el de "isHealthy" (cuando este sea 'true' ya podreis ejecutar los programas de python).
 
 4. Ejecutar el código python que os he pasado: ejecutar en un terminal "python3 iota_server.py" (este primero siempre)
 y en otro terminal "python3 iota_client.py".

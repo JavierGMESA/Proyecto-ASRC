@@ -6,31 +6,21 @@ import random
 import math
 import random
 
-
-# URL del nodo Hornet/IOTA al que se enviarán los bloques
 NODE_URL = "http://localhost:14265"
-# Tag lógico que identifica el tipo de datos (glucosa en este caso)
 TAG = "sensor.glucose"  # cambia por sensor.hum / sensor.press según el tipo
 
-
 def get_tips():
-    # Solicita al nodo la lista de "tips" (bloques hoja) para usarlos como parents
     r = requests.get(f"{NODE_URL}/api/core/v2/tips", timeout=5)
-    # Lanza excepción si la respuesta no es 2xx
     r.raise_for_status()
-    # Devuelve el array de IDs de bloque que vienen en el campo "tips"
     return r.json().get("tips", [])
-
 
 def laplace_noise(scale: float) -> float:
     """
     Genera ruido Laplace(0, scale) usando la transformada inversa.
     """
-    # U ~ Uniform(-0.5, 0.5): número aleatorio uniforme entre -0.5 y 0.5
+    # U ~ Uniform(-0.5, 0.5)
     u = random.random() - 0.5
-    # Aplica la fórmula de la transformada inversa para una Laplace centrada
     return -scale * math.copysign(1.0, u) * math.log(1 - 2 * abs(u))
-
 
 def privatize_value(value: float,
                     epsilon: float = 1.0,
@@ -42,42 +32,33 @@ def privatize_value(value: float,
     - epsilon: controla privacidad (↓epsilon = ↑ruido = ↑privacidad)
     - min_val, max_val: rango esperado del sensor
     """
-    # 1) Recortar al rango permitido para evitar valores fuera de [min_val, max_val]
+    # 1) Recortar al rango permitido
     clipped = max(min_val, min(max_val, value))
 
-    # 2) Sensibilidad: rango máximo posible (diferencia máxima entre dos valores reales)
+    # 2) Sensibilidad: rango máximo posible
     sensitivity = max_val - min_val
 
-    # 3) Escala b = sensibilidad / epsilon (cuanto menor epsilon, mayor escala de ruido)
+    # 3) Escala b = sensibilidad / epsilon
     scale = sensitivity / epsilon
 
-    # 4) Generar ruido Laplace con esa escala
+    # 4) Ruido Laplace
     noise = laplace_noise(scale)
 
-    # Sumar el ruido al valor recortado
     noisy = clipped + noise
 
-    # 5) Recortar de nuevo para evitar que el ruido saque el valor fuera del rango fisiológico
+    # 5) Volver a recortar para evitar valores físicamente imposibles
     noisy_clipped = max(min_val, min(max_val, noisy))
     return noisy_clipped
 
-
 def send_tagged_block(tag: str, payload_obj: dict) -> str | None:
-    # Convertir el tag a hexadecimal (cadena UTF-8 → hex) para el formato de bloque
     tag_hex = tag.encode("utf-8").hex()
-    # Serializar el payload como JSON y luego pasarlo a hex
     data_hex = json.dumps(payload_obj).encode("utf-8").hex()
 
-    # Obtener los tips actuales del nodo para usarlos como parents del nuevo bloque
     parents = get_tips()
     if not parents:
         print("✗ No hay tips disponibles")
         return None
 
-    # Construir el bloque con protocolo Stardust:
-    # - protocolVersion 2
-    # - parents: lista de blockIds a los que este bloque referencia
-    # - payload: tipo 5 (Tagged Data) con tag y data en formato 0x...
     block = {
         "protocolVersion": 2,
         "parents": parents,
@@ -89,37 +70,26 @@ def send_tagged_block(tag: str, payload_obj: dict) -> str | None:
         # sin nonce: si tu nodo hace PoW remoto funcionará; si no, habilítalo en Hornet
     }
 
-    # Enviar el bloque al nodo usando el endpoint REST /api/core/v2/blocks
     r = requests.post(f"{NODE_URL}/api/core/v2/blocks",
                       headers={"Content-Type": "application/json"},
                       json=block, timeout=60)
-    # Si el nodo responde 201, devuelve el blockId generado
     if r.status_code == 201:
         return r.json().get("blockId")
-    # Si hay error, lo mostramos por consola
     print(f"✗ Error HTTP {r.status_code}: {r.text}")
     return None
 
-
 def simulate():
-    # Simula un valor "real" de glucosa uniforme en el rango [70, 180] mg/dL
     return round(random.uniform(70.0, 180.0), 2)
-
 
 def main():
     print("Cliente de sensor: enviando lecturas a IOTA (con LDP)")
-    # Parámetro de privacidad para el mecanismo Laplace
     epsilon = 3.0         # ajusta este valor según el nivel de privacidad
-    # Rango fisiológico esperado de la glucosa
     min_glucose = 70.0
     max_glucose = 180.0
 
-    # Bucle infinito: genera y envía lecturas periódicamente
     while True:
-        # Valor "real" de glucosa simulado por software
         true_value = simulate()  # valor "real" simulado
 
-        # Aplicar LDP al valor para obtener la versión ruidosa que se enviará
         noisy_value = privatize_value(
             true_value,
             epsilon=epsilon,
@@ -127,29 +97,23 @@ def main():
             max_val=max_glucose
         )
 
-        # Construir el payload que se incluirá en el bloque IOTA
         reading = {
-            "sensor_id": "TEMP_001",          # identificador lógico del sensor
-            "type": "glucose",               # tipo de medición
-            "true_value": round(true_value, 2),   # valor real (útil para debug local)
-            "value": round(noisy_value, 2),       # valor privatizado que viaja por IOTA
-            "unit": "mg/dL",                 # unidades de la medición
-            "ts": datetime.utcnow().isoformat() + "Z"  # timestamp en formato ISO UTC
+            "sensor_id": "TEMP_001",
+            "type": "glucose",
+            "true_value": round(true_value, 2),   # opcional, solo para debug local
+            "value": round(noisy_value, 2),       # ESTE es el que viaja por IOTA
+            "unit": "mg/dL",
+            "ts": datetime.utcnow().isoformat() + "Z"
         }
 
-        # Enviar la lectura como bloque tagged data al Tangle
         block_id = send_tagged_block(TAG, reading)
         if block_id:
-            # Mostrar en consola el valor real y el ruidoso junto con el BlockID asignado
             print(
                 f"✓ Enviado: real={reading['true_value']} mg/dL, "
                 f"noisy={reading['value']} mg/dL | BlockID={block_id}"
             )
-        # Esperar unos segundos antes de la siguiente lectura
         time.sleep(3)
 
 
 if __name__ == "__main__":
-    # Punto de entrada cuando se ejecuta el script directamente
     main()
-
