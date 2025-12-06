@@ -170,7 +170,7 @@ def generate_plots():
     # --- Gráfica 2: histogramas de noisy y est ---
     plt.figure(figsize=(8, 5))
     # Definimos bins en el rango fisiológico esperado
-    bins = np.linspace(70, 180, 25)
+    bins = np.linspace(70, 180, 25)     # 70 es el mínimo, 180 es el máximo y creamos 25-1 intervalos del mismo tamaño en ese rango.
 
     # Histograma de valores ruidosos
     plt.hist(noisy_vals, bins=bins, alpha=0.6, label="Noisy", edgecolor="black")
