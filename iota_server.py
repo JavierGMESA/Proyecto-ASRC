@@ -6,8 +6,7 @@ import math
 import numpy as np
 import os
 from datetime import datetime
-
-import matplotlib.pyplot as plt  # pip install matplotlib
+import matplotlib.pyplot as plt
 
 
 # URL del nodo Hornet/IOTA del que se leerán los bloques
@@ -16,12 +15,20 @@ NODE_URL = "http://localhost:14265"
 TAG = "sensor.glucose"
 TAG_HEX = "0x" + TAG.encode("utf-8").hex()
 
+REPORT_INTERVAL = 60  # segundos entre generación de gráficas
+
 # Conjunto de IDs de bloque ya procesados para no repetir trabajo
 processed = set()
 
 # Almacenamos todas las lecturas aquí
 # cada elemento: {"ts": datetime, "noisy": float, "est": float}
 records = []
+
+# Historial de medias por lote
+batch_means = []  # cada elemento: {"ts": datetime, "mean": float}
+
+# Último índice procesado (para separar los lotes)
+last_index_for_means = 0
 
 # Carpeta de salida para PNG
 OUTPUT_DIR = "reports"
@@ -135,7 +142,63 @@ def process_block(block_json):
         print(f"Error decodificando data: {e}")
 
 
+#def generate_plots():
+#    # Si aún no hay datos, no generamos nada
+#    if not records:
+#        print("No hay datos para generar gráficas todavía.")
+#        return
+#
+#    # Ordenar las lecturas por tiempo para que las series temporales tengan sentido
+#    ordered = sorted(records, key=lambda r: r["ts"])
+#    ts = [r["ts"] for r in ordered]
+#    noisy_vals = [r["noisy"] for r in ordered]
+#    est_vals = [r["est"] for r in ordered]
+#
+#    # --- Gráfica 1: tiempo vs glucosa (noisy vs estimado) ---
+#    plt.figure(figsize=(10, 5))
+#    # Serie temporal con los valores ruidosos
+#    plt.plot(ts, noisy_vals, label="Noisy", marker="o", linestyle="-", alpha=0.7)
+#    # Serie temporal con los valores estimados bayesianamente
+#    plt.plot(ts, est_vals, label="Est. Bayes", marker="x", linestyle="--", alpha=0.7)
+#
+#    plt.xlabel("Tiempo")
+#    plt.ylabel("Glucosa (mg/dL)")
+#    plt.title("Glucosa ruidosa vs estimada (LDP)")
+#    plt.legend()
+#    plt.grid(True)
+#    plt.tight_layout()
+#
+#    # Guardar la figura como PNG en la carpeta reports
+#    line_path = os.path.join(OUTPUT_DIR, "glucose_noisy_vs_estimated.png")
+#    plt.savefig(line_path)
+#    plt.close()
+#    print(f"Gráfica de líneas guardada en {line_path}")
+#
+#    # --- Gráfica 2: histogramas de noisy y est ---
+#    plt.figure(figsize=(8, 5))
+#    # Definimos bins en el rango fisiológico esperado
+#    bins = np.linspace(70, 180, 25)     # 70 es el mínimo, 180 es el máximo y creamos 25-1 intervalos del mismo tamaño en ese rango.
+#
+#    # Histograma de valores ruidosos
+#    plt.hist(noisy_vals, bins=bins, alpha=0.6, label="Noisy", edgecolor="black")
+#    # Histograma de valores estimados
+#    plt.hist(est_vals, bins=bins, alpha=0.6, label="Est. Bayes", edgecolor="black")
+#
+#    plt.xlabel("Glucosa (mg/dL)")
+#    plt.ylabel("Frecuencia")
+#    plt.title("Distribución de glucosa (noisy vs estimado)")
+#    plt.legend()
+#    plt.tight_layout()
+#
+#    # Guardar la figura como PNG
+#    hist_path = os.path.join(OUTPUT_DIR, "glucose_histogram.png")
+#    plt.savefig(hist_path)
+#    plt.close()
+#    print(f"Histograma guardado en {hist_path}")
+
 def generate_plots():
+    global last_index_for_means, batch_means
+    MAX_POINTS = 200
     # Si aún no hay datos, no generamos nada
     if not records:
         print("No hay datos para generar gráficas todavía.")
@@ -143,6 +206,7 @@ def generate_plots():
 
     # Ordenar las lecturas por tiempo para que las series temporales tengan sentido
     ordered = sorted(records, key=lambda r: r["ts"])
+    ordered = ordered[-MAX_POINTS:]
     ts = [r["ts"] for r in ordered]
     noisy_vals = [r["noisy"] for r in ordered]
     est_vals = [r["est"] for r in ordered]
@@ -170,7 +234,7 @@ def generate_plots():
     # --- Gráfica 2: histogramas de noisy y est ---
     plt.figure(figsize=(8, 5))
     # Definimos bins en el rango fisiológico esperado
-    bins = np.linspace(70, 180, 25)     # 70 es el mínimo, 180 es el máximo y creamos 25-1 intervalos del mismo tamaño en ese rango.
+    bins = np.linspace(70, 180, 25)  # 24 intervalos iguales en [70, 180]
 
     # Histograma de valores ruidosos
     plt.hist(noisy_vals, bins=bins, alpha=0.6, label="Noisy", edgecolor="black")
@@ -189,13 +253,52 @@ def generate_plots():
     plt.close()
     print(f"Histograma guardado en {hist_path}")
 
+    # --- Gráfica 3: medias acumuladas en el tiempo ---
+    # Calculamos la media 
+    new_data = ordered[last_index_for_means:]
+    if new_data:
+        # Calcular media del lote nuevo usando los estimados bayesianos
+        mean_value = np.mean([r["est"] for r in new_data])
+        last_ts = new_data[-1]["ts"]
+
+        # Guardarlo como punto en la serie de medias
+        batch_means.append({"ts": last_ts, "mean": mean_value})
+
+        # Limitar a las últimas 10 medias
+        if len(batch_means) > 10:
+            batch_means = batch_means[-10:]
+        
+        print(f"Nueva media de lote: {mean_value:.2f} mg/dL @ {last_ts}")
+
+        # Actualizar índice global
+        last_index_for_means = len(ordered)
+
+    # Crear gráfica de evolución de medias por lote
+    plt.figure(figsize=(8, 4))
+    plt.plot(
+        [m["ts"] for m in batch_means],
+        [m["mean"] for m in batch_means],
+        marker="o",
+        linestyle="-",
+        label="Media por lote"
+    )
+
+    plt.xlabel("Tiempo (último valor del lote)")
+    plt.ylabel("Media glucosa (mg/dL)")
+    plt.title("Evolución de la media de glucosa por lotes")
+    plt.grid(True)
+    plt.tight_layout()
+
+    mean_path = os.path.join(OUTPUT_DIR, "glucose_batch_means.png")
+    plt.savefig(mean_path)
+    plt.close()
+    print(f"Gráfica de medias por lote guardada en {mean_path}")
+
 
 def main():
     print("Servidor: escuchando bloques con el tag objetivo")
     # Timestamp del último momento en que se generaron gráficas
     last_report = time.time()
-    # Intervalo (en segundos) entre generaciones de gráficas
-    REPORT_INTERVAL = 300  # segundos entre generación de gráficas
 
     # Bucle principal: leer tips, recuperar bloques, procesarlos y periódicamente graficar
     while True:
